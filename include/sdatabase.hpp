@@ -10,6 +10,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <stdexcept>
+#include <cstdint>
 
 #ifndef SDB_SQLITE3
 #ifndef SDB_POSTGRESQL
@@ -329,10 +330,7 @@ inline bool sdatabase::PostgreSQLDatabase::exec(const std::string& query, const 
         throw std::runtime_error{"Invalid SQL statement in database '" + this->database + "': " + query + "\n"};
     }
 
-    std::string new_query = query;
-    new_query.erase(std::remove(new_query.begin(), new_query.end(), '\n'), new_query.end());
-
-    PGresult* res = PQexec(pg_conn, new_query.c_str());
+    PGresult* res = PQexec(pg_conn, query.c_str());
 
     if (PQresultStatus(res) != PGRES_COMMAND_OK) {
         PQclear(res);
@@ -368,10 +366,7 @@ inline std::vector<std::unordered_map<std::string, std::string>> sdatabase::Post
         throw std::runtime_error{"Invalid SQL statement: " + query + "\n"};
     }
 
-    std::string new_query = query;
-    new_query.erase(std::remove(new_query.begin(), new_query.end(), '\n'), new_query.end());
-
-    PGresult* res = PQexec(pg_conn, new_query.c_str());
+    PGresult* res = PQexec(pg_conn, query.c_str());
 
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
         PQclear(res);
