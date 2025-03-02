@@ -1,3 +1,3 @@
 # sdatabase
 
-Simple database abstraction for SQLite3 (and potential future databases)
+Simple database abstraction for SQLite3 and PostgreSQL
