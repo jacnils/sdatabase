@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -31,27 +32,152 @@
 namespace sdatabase {
 #ifdef SDB_SQLITE3
     /**
+     * @brief Temporary storage for data. Do not use this directly.
+     */
+    inline std::vector<std::unordered_map<std::string, std::string>> tmp{};
+    /**
+     * @brief Callback function for sqlite3_exec.
+     *
+     * @param data Pointer to data.
+     * @param argc Number of columns.
+     * @param argv Column values.
+     * @param name Column names.
+     * @return int 0.
+     */
+    int callback(void* data, int argc, char** argv, char** name);
+#endif
+#ifdef SDB_SQLITE3
+    /**
      * @brief Class for database operations.
      */
     class SQLite3Database {
-            sqlite3* sqlite3_db{};
-            std::string database{};
-            bool is_good{false};
+        sqlite3* sqlite3_db{};
+        std::string database{};
+        bool is_good{false};
+
+        template<typename T, typename... Args>
+        void bind_parameters(sqlite3_stmt* stmt, int index, T value, Args... args) {
+            if constexpr (std::is_same_v<T, int>) {
+                bind_parameter(stmt, index, value);
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+                bind_parameter(stmt, index, value);
+            } else if constexpr (std::is_same_v<T, double>) {
+                bind_parameter(stmt, index, value);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                bind_parameter(stmt, index, value);
+            } else if constexpr (std::is_same_v<T, const char*>) {
+                bind_parameter(stmt, index, value);
+            }
+            bind_parameters(stmt, index + 1, args...);
+        }
+
+        void bind_parameters(sqlite3_stmt* stmt, int index) {}
+
+        void bind_parameter(sqlite3_stmt* stmt, int index, int value) {
+            sqlite3_bind_int(stmt, index, value);
+        }
+
+        void bind_parameter(sqlite3_stmt* stmt, int index, int64_t value) {
+            sqlite3_bind_int64(stmt, index, value);
+        }
+
+        void bind_parameter(sqlite3_stmt* stmt, int index, double value) {
+            sqlite3_bind_double(stmt, index, value);
+        }
+
+        void bind_parameter(sqlite3_stmt* stmt, int index, const std::string& value) {
+            sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        void bind_parameter(sqlite3_stmt* stmt, int index, const char* value) {
+            sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT);
+        }
+
         public:
+            template <typename... Args>
+            bool exec(const std::string& query, Args... args) {
+                static_assert(sizeof...(args) > 0, "exec() requires more parameters");
+                sqlite3_stmt* stmt;
+
+                std::string nq{};
+                for (size_t i = 0; i < query.size(); ++i) {
+                    if (query[i] == '$' && i + 1 < query.size() && isdigit(query[i + 1])) {
+                        nq += '?';
+                        while (i + 1 < query.size() && isdigit(query[i + 1])) {
+                            ++i;
+                        }
+                    } else {
+                        nq += query[i];
+                    }
+                }
+
+                if (sqlite3_prepare_v2(sqlite3_db, nq.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                    std::cerr << "Failed to prepare statement\n";
+                    return false;
+                }
+
+                bind_parameters(stmt, 1, args...);
+
+                if (sqlite3_step(stmt) != SQLITE_DONE) {
+                    std::cerr << "Failed to step statement" << sqlite3_errmsg(sqlite3_db) << "\n";
+                    return false;
+                }
+
+                sqlite3_finalize(stmt);
+
+                return true;
+            }
+            template <typename... Args>
+            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query, Args... args) {
+                static_assert(sizeof...(args) > 0, "query() requires more parameters");
+                if (!this->is_good) {
+                    return {};
+                }
+
+                std::string nq{};
+                for (size_t i = 0; i < query.size(); ++i) {
+                    if (query[i] == '$' && i + 1 < query.size() && isdigit(query[i + 1])) {
+                        nq += '?';
+                        while (i + 1 < query.size() && isdigit(query[i + 1])) {
+                            ++i;
+                        }
+                    } else {
+                        nq += query[i];
+                    }
+                }
+
+                sqlite3_stmt* stmt;
+                if (sqlite3_prepare_v2(sqlite3_db, nq.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                    return {};
+                }
+
+                bind_parameters(stmt, 1, args...);
+
+                std::vector<std::unordered_map<std::string, std::string>> result;
+                int status;
+                while ((status = sqlite3_step(stmt)) == SQLITE_ROW) {
+                    std::unordered_map<std::string, std::string> row;
+                    for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+                        row[sqlite3_column_name(stmt, i)] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
+                    }
+                    result.push_back(std::move(row));
+                }
+
+                sqlite3_finalize(stmt);
+                return result;
+            }
             /**
              * @brief Query the database, returning data.
              * @param query Query to execute.
-             * @param validate Validate the query.
              * @return std::vector<std::unordered_map<std::string, std::string>> Data.
              */
-            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query, const bool validate=true);
+            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query);
             /**
              * @brief Execute an SQL command.
              * @param query Query to execute.
-             * @param validate Validate the query.
              * @return bool True if successful.
              */
-            bool exec(const std::string& query, const bool validate=true);
+            bool exec(const std::string& query);
             /**
              * @brief Check if the database is good.
              * @return bool True if good.
@@ -112,9 +238,99 @@ namespace sdatabase {
             std::string database{};
             bool is_good{false};
             int port{5432};
+
+            template <typename T>
+            std::string to_string(const T& value) {
+                if constexpr (std::is_same_v<T, std::string>) {
+                    return value;
+                } else if constexpr (std::is_same_v<T, const char*>) {
+                    return std::string(value);
+                } else {
+                    return std::to_string(value);
+                }
+            }
         public:
-            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query, const bool validate=true);
-            bool exec(const std::string& query, const bool validate=true);
+            template <typename... Args>
+            bool exec(const std::string& query, Args... args) {
+                static_assert(sizeof...(args) > 0, "exec() requires more parameters");
+                if (!this->is_good) {
+                    return false;
+                }
+
+                int i{1};
+                std::string nq{};
+                for (char ch : query) {
+                    if (ch == '?') {
+                        nq += "$" + std::to_string(i++);
+                    } else {
+                        nq += ch;
+                    }
+                }
+
+                std::vector<std::string> str{to_string(args)...};
+                std::vector<const char*> param_v{};
+                for (const std::string& s : str) {
+                    param_v.push_back(s.c_str());
+                }
+
+                PGresult* res = PQexecParams(pg_conn, nq.c_str(), param_v.size(), nullptr, param_v.data(), nullptr, nullptr, 0);
+
+                if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+                    PQclear(res);
+                    return false;
+                }
+
+                PQclear(res);
+                return true;
+            }
+
+            template <typename... Args>
+            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query, Args... args) {
+                static_assert(sizeof...(args) > 0, "query() requires more parameters");
+                if (!this->is_good) {
+                    return {};
+                }
+
+                int n{1};
+                std::string nq{};
+                for (char ch : query) {
+                    if (ch == '?') {
+                        nq += "$" + std::to_string(n++);
+                    } else {
+                        nq += ch;
+                    }
+                }
+
+                std::vector<std::string> str{to_string(args)...};
+                std::vector<const char*> param_v{};
+                for (const std::string& s : str) {
+                    param_v.push_back(s.c_str());
+                }
+
+                PGresult* res = PQexecParams(pg_conn, nq.c_str(), param_v.size(), nullptr, param_v.data(), nullptr, nullptr, 0);
+
+                if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+                    PQclear(res);
+                    return {};
+                }
+
+                std::vector<std::unordered_map<std::string, std::string>> result;
+                int nrows = PQntuples(res);
+                int nfields = PQnfields(res);
+
+                for (int i = 0; i < nrows; ++i) {
+                    std::unordered_map<std::string, std::string> row;
+                    for (int j = 0; j < nfields; ++j) {
+                        row[PQfname(res, j)] = PQgetvalue(res, i, j);
+                    }
+                    result.push_back(std::move(row));
+                }
+
+                PQclear(res);
+                return result;
+            }
+            std::vector<std::unordered_map<std::string, std::string>> query(const std::string& query);
+            bool exec(const std::string& query);
             bool good();
             bool is_open();
             void open(const std::string& host, const std::string& user, const std::string& password, const std::string& database, int port=5432);
@@ -126,23 +342,6 @@ namespace sdatabase {
             PostgreSQLDatabase(const std::string& host, const std::string& user, const std::string& password, const std::string& database, int port=5432);
             ~PostgreSQLDatabase();
     };
-#endif
-
-#ifdef SDB_SQLITE3
-    /**
-     * @brief Temporary storage for data. Do not use this directly.
-     */
-    inline std::vector<std::unordered_map<std::string, std::string>> tmp{};
-    /**
-     * @brief Callback function for sqlite3_exec.
-     *
-     * @param data Pointer to data.
-     * @param argc Number of columns.
-     * @param argv Column values.
-     * @param name Column names.
-     * @return int 0.
-     */
-    int callback(void* data, int argc, char** argv, char** name);
 #endif
 }
 
@@ -185,12 +384,12 @@ inline void sdatabase::SQLite3Database::open(const std::string& database) {
     this->is_good = true;
 }
 
-inline bool sdatabase::SQLite3Database::exec(const std::string& query, const bool validate) {
+inline bool sdatabase::SQLite3Database::exec(const std::string& query) {
     if (!this->is_good) {
         return false;
     }
 
-    if (validate && !this->validate(query)) {
+    if (!this->validate(query)) {
         throw std::runtime_error{"Invalid SQL statement in database file '" + this->database + "': " + query + "\n"};
     }
 
@@ -224,12 +423,12 @@ inline bool sdatabase::SQLite3Database::validate(const std::string& query) {
     return true;
 }
 
-inline std::vector<std::unordered_map<std::string, std::string>> sdatabase::SQLite3Database::query(const std::string& query, const bool validate) {
+inline std::vector<std::unordered_map<std::string, std::string>> sdatabase::SQLite3Database::query(const std::string& query) {
     if (!this->is_good) {
         return {};
     }
 
-    if (validate && !this->validate(query)) {
+    if (!this->validate(query)) {
         throw std::runtime_error{"Invalid SQL statement: " + query + "\n"};
     }
 
@@ -317,7 +516,7 @@ inline void sdatabase::PostgreSQLDatabase::open(const std::string& host,
     this->is_good = true;
 }
 
-inline bool sdatabase::PostgreSQLDatabase::exec(const std::string& query, const bool validate) {
+inline bool sdatabase::PostgreSQLDatabase::exec(const std::string& query) {
     if (!this->is_good) {
         return false;
     }
@@ -326,7 +525,7 @@ inline bool sdatabase::PostgreSQLDatabase::exec(const std::string& query, const 
         throw std::runtime_error{"Connection to database failed: " + std::string(PQerrorMessage(pg_conn))};
     }
 
-    if (validate && !this->validate(query)) {
+    if (!this->validate(query)) {
         throw std::runtime_error{"Invalid SQL statement in database '" + this->database + "': " + query + "\n"};
     }
 
@@ -357,12 +556,12 @@ inline bool sdatabase::PostgreSQLDatabase::validate(const std::string& query) {
     return true;
 }
 
-inline std::vector<std::unordered_map<std::string, std::string>> sdatabase::PostgreSQLDatabase::query(const std::string& query, const bool validate) {
+inline std::vector<std::unordered_map<std::string, std::string>> sdatabase::PostgreSQLDatabase::query(const std::string& query) {
     if (!this->is_good) {
         return {};
     }
 
-    if (validate && !this->validate(query)) {
+    if (!this->validate(query)) {
         throw std::runtime_error{"Invalid SQL statement: " + query + "\n"};
     }
 
