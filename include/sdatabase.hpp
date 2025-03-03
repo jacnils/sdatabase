@@ -21,6 +21,9 @@
 #ifndef SDB_ENABLE_ICONV
 #define SDB_ENABLE_ICONV
 #endif
+#ifndef SDB_ENABLE_PRINTDEBUG
+#define SDB_ENABLE_PRINTDEBUG 0
+#endif
 
 #ifdef SDB_SQLITE3
 #include <sqlite3.h>
@@ -97,6 +100,11 @@ namespace sdatabase {
                     if (errno == EILSEQ || errno == EINVAL) {
                         ++inbuf;
                         --inbytesleft;
+                    } else if (errno == E2BIG) {
+                        size_t used = output.size() - outbytesleft;
+                        output.resize(output.size() * 2);
+                        outbuf = output.data() + used;
+                        outbytesleft = output.size() - used;
                     } else {
                         iconv_close(cd);
                         return "";
@@ -114,22 +122,37 @@ namespace sdatabase {
         void bind_parameters(sqlite3_stmt* stmt, int index) {}
 
         void bind_parameter(sqlite3_stmt* stmt, int index, int value) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+            std::cerr << "Binding int: " << value << " to index: " << index << "\n";
+#endif
             sqlite3_bind_int(stmt, index, value);
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, int64_t value) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+            std::cerr << "Binding int: " << value << " to index: " << index << "\n";
+#endif
             sqlite3_bind_int64(stmt, index, value);
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, double value) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+            std::cerr << "Binding double: " << value << " to index: " << index << "\n";
+#endif
             sqlite3_bind_double(stmt, index, value);
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, const std::string& value) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+            std::cerr << "Binding string: " << value << " to index: " << index << "\n";
+#endif
             sqlite3_bind_text(stmt, index, remove_non_utf8(value).c_str(), -1, SQLITE_TRANSIENT);
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, const char* value) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+            std::cerr << "Binding string: " << value << " to index: " << index << "\n";
+#endif
             sqlite3_bind_text(stmt, index, remove_non_utf8(value).c_str(), -1, SQLITE_TRANSIENT);
         }
 
@@ -309,6 +332,11 @@ namespace sdatabase {
                         if (errno == EILSEQ || errno == EINVAL) {
                             ++inbuf;
                             --inbytesleft;
+                        } else if (errno == E2BIG) {
+                            size_t used = output.size() - outbytesleft;
+                            output.resize(output.size() * 2);
+                            outbuf = output.data() + used;
+                            outbytesleft = output.size() - used;
                         } else {
                             iconv_close(cd);
                             return "";
@@ -343,6 +371,9 @@ namespace sdatabase {
                 std::vector<std::string> str{remove_non_utf8(to_string(args))...};
                 std::vector<const char*> param_v{};
                 for (const std::string& s : str) {
+#ifdef SDB_ENABLE_PRINTDEBUG
+                    std::cerr << "Binding string: " << s << "\n";
+#endif
                     param_v.push_back(s.c_str());
                 }
 
