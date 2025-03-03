@@ -18,12 +18,19 @@
 #define SDB_SQLITE3
 #endif
 #endif
+#ifndef SDB_ENABLE_ICONV
+#define SDB_ENABLE_ICONV
+#endif
 
 #ifdef SDB_SQLITE3
 #include <sqlite3.h>
 #endif
 #ifdef SDB_POSTGRESQL
 #include <libpq-fe.h>
+#endif
+
+#ifdef SDB_ENABLE_ICONV
+#include <iconv.h>
 #endif
 
 /**
@@ -71,6 +78,39 @@ namespace sdatabase {
             bind_parameters(stmt, index + 1, args...);
         }
 
+        std::string remove_non_utf8(const std::string& input) {
+#ifdef SDB_ENABLE_ICONV
+            iconv_t cd = iconv_open("UTF-8//IGNORE", "UTF-8");
+            if (cd == (iconv_t)-1) {
+                throw std::runtime_error("iconv_open failed");
+            }
+
+            std::vector<char> output(input.size() * 2);
+            char* inbuf = const_cast<char*>(input.data());
+            size_t inbytesleft = input.size();
+            char* outbuf = output.data();
+            size_t outbytesleft = output.size();
+
+            while (inbytesleft > 0) {
+                size_t result = iconv(cd, &inbuf, &inbytesleft, &outbuf, &outbytesleft);
+                if (result == (size_t)-1) {
+                    if (errno == EILSEQ || errno == EINVAL) {
+                        ++inbuf;
+                        --inbytesleft;
+                    } else {
+                        iconv_close(cd);
+                        return "";
+                    }
+                }
+            }
+
+            iconv_close(cd);
+            return std::string(output.data(), output.size() - outbytesleft);
+#else
+            return input;
+#endif
+        }
+
         void bind_parameters(sqlite3_stmt* stmt, int index) {}
 
         void bind_parameter(sqlite3_stmt* stmt, int index, int value) {
@@ -86,11 +126,11 @@ namespace sdatabase {
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, const std::string& value) {
-            sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, index, remove_non_utf8(value).c_str(), -1, SQLITE_TRANSIENT);
         }
 
         void bind_parameter(sqlite3_stmt* stmt, int index, const char* value) {
-            sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, index, remove_non_utf8(value).c_str(), -1, SQLITE_TRANSIENT);
         }
 
         public:
@@ -249,6 +289,39 @@ namespace sdatabase {
                     return std::to_string(value);
                 }
             }
+
+        std::string remove_non_utf8(const std::string& input) {
+#ifdef SDB_ENABLE_ICONV
+                iconv_t cd = iconv_open("UTF-8//IGNORE", "UTF-8");
+                if (cd == (iconv_t)-1) {
+                    throw std::runtime_error("iconv_open failed");
+                }
+
+                std::vector<char> output(input.size() * 2);
+                char* inbuf = const_cast<char*>(input.data());
+                size_t inbytesleft = input.size();
+                char* outbuf = output.data();
+                size_t outbytesleft = output.size();
+
+                while (inbytesleft > 0) {
+                    size_t result = iconv(cd, &inbuf, &inbytesleft, &outbuf, &outbytesleft);
+                    if (result == (size_t)-1) {
+                        if (errno == EILSEQ || errno == EINVAL) {
+                            ++inbuf;
+                            --inbytesleft;
+                        } else {
+                            iconv_close(cd);
+                            return "";
+                        }
+                    }
+                }
+
+                iconv_close(cd);
+                return std::string(output.data(), output.size() - outbytesleft);
+#else
+                return input;
+#endif
+            }
         public:
             template <typename... Args>
             bool exec(const std::string& query, Args... args) {
@@ -267,7 +340,7 @@ namespace sdatabase {
                     }
                 }
 
-                std::vector<std::string> str{to_string(args)...};
+                std::vector<std::string> str{remove_non_utf8(to_string(args))...};
                 std::vector<const char*> param_v{};
                 for (const std::string& s : str) {
                     param_v.push_back(s.c_str());
