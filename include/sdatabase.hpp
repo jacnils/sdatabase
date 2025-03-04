@@ -21,9 +21,6 @@
 #ifndef SDB_ENABLE_ICONV
 #define SDB_ENABLE_ICONV
 #endif
-#ifndef SDB_ENABLE_PRINTDEBUG
-#define SDB_ENABLE_PRINTDEBUG 0
-#endif
 
 #ifdef SDB_SQLITE3
 #include <sqlite3.h>
